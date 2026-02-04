@@ -2,15 +2,14 @@ import yfinance as yf
 import pandas as pd
 import requests
 import os
-import datetime
 import io
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 1. 設定與清單
+# 1. 設定區域
 # ==========================================
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-YIELD_THRESHOLD = 6.0 
+YIELD_THRESHOLD = 5.0  # 設定為 5% (通常新加坡高息股在 5-8% 之間)
 
 # 設定 Matplotlib 後端 (避免在伺服器跳出視窗)
 plt.switch_backend('Agg')
@@ -85,40 +84,28 @@ def generate_chart_buffer(hist_data, ticker_raw):
         return None
 
 # ==========================================
-# 3. 主程式 (改用 Batch Download)
+# 3. 主程式
 # ==========================================
 def main():
     print(f"🚀 啟動批量掃描 ({len(tickers_formatted)} 檔)...")
     
-    # [關鍵修改] 使用 yf.download 批量下載 (自動處理重試與多線程)
-    # group_by='ticker' 讓資料結構更好處理
     try:
-        print("正在向 Yahoo 請求數據 (這可能需要 10-20 秒)...")
+        # 下載數據
         data = yf.download(tickers_formatted, period="1y", group_by='ticker', progress=False)
-        
         if data.empty:
-            print("❌ Yahoo 回傳空資料 (可能被 IP 封鎖或網路問題)。")
-            # 嘗試發送一個錯誤通知到 Discord，讓你知道程式掛了
-            send_discord_text("⚠️ **警報**：GitHub Actions 無法抓取 Yahoo 數據，可能 IP 被鎖。")
+            print("❌ Yahoo 回傳空資料")
             return
-            
     except Exception as e:
-        print(f"❌ 下載過程發生嚴重錯誤: {e}")
+        print(f"❌ 下載錯誤: {e}")
         return
 
-    print("數據下載完成，開始分析殖利率...")
     results = []
     
-    # 遍歷所有下載到的股票
     for ticker_raw in sg_tickers_raw:
         ticker_si = f"{ticker_raw}.SI"
         
         try:
-            # 從批量資料中提取該股資料
-            # 注意：如果某檔股票下載失敗，這裡會報錯，我們用 try 接住
-            if ticker_si not in data.columns.levels[0]:
-                continue
-                
+            if ticker_si not in data.columns.levels[0]: continue
             df_stock = data[ticker_si]
             if df_stock.empty: continue
 
@@ -126,52 +113,57 @@ def main():
             price = df_stock['Close'].iloc[-1]
             if pd.isna(price): continue
 
-            # 抓取殖利率 (這是唯一需要單獨 call 的地方，但我們加強容錯)
-            # 為了避免這裡卡住，我們只對「有價格」的股票做檢查
+            # 抓取殖利率 (容錯處理)
             try:
                 t_obj = yf.Ticker(ticker_si)
-                # 這裡可能比較慢，但因為只跑一次 info，相對穩定
-                # 若 info 抓不到，預設給 0
-                div_yield = t_obj.info.get('dividendYield', 0)
-            except:
-                div_yield = 0
+                # 這裡最關鍵：有的回傳 0.05，有的回傳 5.0
+                raw_yield = t_obj.info.get('dividendYield', 0)
+                
+                # --- [修正邏輯] ---
+                if raw_yield is None:
+                    final_yield = 0.0
+                elif raw_yield > 0.3: 
+                    # 如果大於 0.3 (30%)，假設它已經是百分比 (例如 4.83)
+                    final_yield = float(raw_yield)
+                else:
+                    # 如果小於 0.3，假設它是小數 (例如 0.0483)，需乘 100
+                    final_yield = float(raw_yield) * 100
+                
+                # 二次檢查：如果算出來超過 100%，肯定是錯的 (除非是異常股)，強制修正
+                if final_yield > 100:
+                    final_yield = final_yield / 100
+                # ------------------
 
-            if div_yield and div_yield > 0:
+            except:
+                final_yield = 0.0
+
+            if final_yield >= YIELD_THRESHOLD:
                 results.append({
                     "Code": ticker_raw,
-                    "Name": ticker_raw, # 批量下載較難拿到中文名，先用代碼代替
+                    "Name": ticker_raw,
                     "Price": round(price, 2),
-                    "Yield": round(div_yield * 100, 2),
-                    "History": df_stock # 暫存歷史資料給繪圖用
+                    "Yield": round(final_yield, 2),
+                    "History": df_stock
                 })
                 
-        except Exception as e:
-            continue # 跳過這檔壞掉的
-
-    # 轉為 DataFrame
-    if not results:
-        print("⚠️ 分析後無資料 (所有股票皆無殖利率資訊 或 抓取失敗)")
-        return
-
-    df_res = pd.DataFrame(results)
-    
-    # 篩選
-    high_yield = df_res[df_res['Yield'] >= YIELD_THRESHOLD].sort_values(by="Yield", ascending=False)
-    
-    print(f"篩選結果：共發現 {len(high_yield)} 檔符合條件")
+        except Exception:
+            continue
 
     # 發送通知
-    if not high_yield.empty:
+    if results:
+        df_res = pd.DataFrame(results).sort_values(by="Yield", ascending=False)
+        
         # 1. 發送總表
-        msg = f"**📊 SGX 高殖利率快報**\n門檻: > {YIELD_THRESHOLD}%\n```ini\n Code   Yield    Price\n"
+        msg = f"**📊 SGX 高殖利率快報 (修正版)**\n門檻: > {YIELD_THRESHOLD}%\n```ini\n Code   Yield    Price\n"
         msg += "-"*25 + "\n"
-        for _, row in high_yield.iterrows():
+        for _, row in df_res.iterrows():
              msg += f"{row['Code']:<5} {row['Yield']:>5}%   ${row['Price']:<7}\n"
         msg += "```"
         send_discord_text(msg)
         
-        # 2. 發送個別圖表
-        for _, row in high_yield.iterrows():
+        # 2. 發送個別圖表 (這裡為了避免洗版，只發前 5 名，您可以自行調整)
+        top_picks = df_res.head(10) 
+        for _, row in top_picks.iterrows():
             chart_buf = generate_chart_buffer(row['History'], row['Code'])
             if chart_buf:
                 send_discord_with_chart(row['Code'], row, chart_buf)
