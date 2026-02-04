@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 # 1. 設定區域
 # ==========================================
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-YIELD_THRESHOLD = 5.0  # 設定為 5% (通常新加坡高息股在 5-8% 之間)
+YIELD_THRESHOLD = 7.0  # 設定為 5% (通常新加坡高息股在 5-8% 之間)
 
 # 設定 Matplotlib 後端 (避免在伺服器跳出視窗)
 plt.switch_backend('Agg')
