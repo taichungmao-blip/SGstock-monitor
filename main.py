@@ -157,7 +157,7 @@ def main():
         msg = f"**📊 SGX 高殖利率快報 (修正版)**\n門檻: > {YIELD_THRESHOLD}%\n```ini\n Code   Yield    Price\n"
         msg += "-"*25 + "\n"
         for _, row in df_res.iterrows():
-             msg += f"{row['Code']:<5} {row['Yield']:>5}%   ${row['Price']:<7}\n"
+             msg += f"{row['Code']:<5} {row['Yield']:>7}%   ${row['Price']:<7}\n"
         msg += "```"
         send_discord_text(msg)
         
