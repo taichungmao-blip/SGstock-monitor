@@ -1,0 +1,40 @@
+name: SGX Daily Yield Check
+
+on:
+  schedule:
+    # 台灣/新加坡時間 19:00 執行
+    # 計算方式：19:00 (UTC+8) - 8小時 = 11:00 (UTC)
+    # 頻率：週一至週五 (1-5)
+    - cron: '0 11 * * 1-5'
+  
+  # 允許手動點擊 "Run workflow" 按鈕觸發 (方便您測試或補跑)
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # 設定時區環境變數 (讓 Log 顯示正確時間)
+    env:
+      TZ: Asia/Taipei
+
+    steps:
+    - name: Checkout code (下載程式碼)
+      uses: actions/checkout@v3
+
+    - name: Set up Python (設定 Python 環境)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies (安裝套件)
+      run: |
+        python -m pip install --upgrade pip
+        # 注意：這裡包含了 matplotlib 以支援繪圖功能
+        pip install yfinance pandas requests matplotlib
+
+    - name: Run stock scanner (執行主程式)
+      env:
+        # 讀取 GitHub Repository Settings > Secrets 中的 Token
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: python main.py
